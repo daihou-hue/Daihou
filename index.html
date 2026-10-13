@@ -613,8 +613,38 @@
     if (e.target.id === 'fileIn' && e.target.files[0]) { importJson(e.target.files[0]); e.target.value = ''; }
   });
 
+  // ========== 一键导入链接：网址 #add=[{n:名称,a:金额,s:放款日,e:到期日,m:还款方式}] ==========
+  // 名单只在链接的 # 之后，不会发送到服务器，也不在代码仓库里
+  function importFromLink() {
+    var m = location.hash.match(/^#add=(.+)$/);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    var list;
+    try { list = JSON.parse(decodeURIComponent(m[1])); if (!Array.isArray(list)) throw 0; } catch (e) { toast('导入链接不完整，请复制完整链接再试'); return; }
+    var demo = demoData().clients, isDemo = db.clients.length && db.clients.every(function (c) {
+      return demo.some(function (d) { return d.id === c.id && d.name === c.name; });
+    });
+    var byName = {}, added = 0, updated = 0;
+    if (isDemo) db = { clients: [], records: {} };
+    db.clients.forEach(function (c) { byName[c.name] = c; });
+    list.forEach(function (x, i) {
+      var name = String(x.n || '').trim(); if (!name) return;
+      var c = byName[name];
+      if (c) updated++; else { c = byName[name] = { id: 'c' + Date.now().toString(36) + i, name: name, amount: 0, start: '', end: '', method: '' }; db.clients.push(c); added++; }
+      if (x.a != null) c.amount = +x.a || 0;
+      if (x.s) c.start = x.s;
+      if (x.e) c.end = x.e;
+      if (x.m) c.method = x.m;
+    });
+    save();
+    state.tab = 'clients';
+    toast('已导入：新增 ' + added + ' 家' + (updated ? '，更新 ' + updated + ' 家' : '') + (isDemo ? '（已清除演示数据）' : ''));
+  }
+
   load();
+  importFromLink();
   render();
+  window.addEventListener('hashchange', function () { if (/^#add=/.test(location.hash)) { importFromLink(); render(); } });
 })();
 </script>
 </body>
