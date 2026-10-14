@@ -199,7 +199,8 @@
   // loans/{id}: clientId, amount, start, end, method, plan, note, closed
   // records/{季度_客户id}: 季度三项进度；settings/main: 提醒参数
   var store = null, clients = [], loans = [], records = {}, settings = Object.assign({}, DEFAULT_SET);
-  var loaded = { c: false, r: false, l: false, s: false }, failed = '';
+  var tasks = [];
+  var loaded = { c: false, r: false, l: false, s: false, t: false }, failed = '';
   var state = { tab: 'board', q: qKey(today()), filter: 'all', delArm: '', dueFilter: 'todo' };
 
   function blankRec() { return { visit: { s: 0, date: '', note: '' }, loan: { s: 0, note: '' }, report: { s: 0 } }; }
@@ -211,6 +212,8 @@
   function hasRec(k, id) { return !!records[k + '_' + id]; }
   function sortedClients() { return clients.slice().sort(function (a, b) { return ((a.order || 0) - (b.order || 0)) || a.name.localeCompare(b.name, 'zh'); }); }
   function findClient(id) { return clients.filter(function (x) { return x.id === id; })[0]; }
+  function findTask(id) { return tasks.filter(function (x) { return x.id === id; })[0]; }
+  function tasksOf(cid) { return tasks.filter(function (t) { return t.clientId === cid; }).sort(function (a, b) { return (a.done - b.done) || String(a.due || '9').localeCompare(String(b.due || '9')); }); }
   function findLoan(id) { return loans.filter(function (x) { return x.id === id; })[0]; }
   function credit(c) { return Object.assign({ limit: 0, start: '', end: '', guarantee: '', renew: 0 }, c && c.credit); }
   function loansOf(cid, all) {
@@ -297,6 +300,11 @@
         items.push({ kind: 'loan', c: c, l: l, days: d, lv: d < 0 ? 'bad' : a.lv, title: '借据 ' + money(l.amount) + ' 到期 ' + l.end + (l.plan ? ' · 计划：' + PLANS[l.plan] : ''), text: (d < 0 ? '已过到期日仍未结清；' : '') + a.text });
       });
     });
+    tasks.forEach(function (t) {
+      var c = findClient(t.clientId); if (!c || t.done) return;
+      var due = parse(t.due), d = due ? daysBetween(today(), due) : 9999;
+      items.push({ kind: 'task', c: c, t: t, days: d, lv: d <= 7 ? 'bad' : d <= 30 ? 'mid' : 'none', title: '待办' + (t.due ? ' · 截止 ' + t.due : ''), text: t.title + (t.note ? '（' + t.note + '）' : '') });
+    });
     return items.sort(function (a, b) { return a.days - b.days; });
   }
 
@@ -305,7 +313,7 @@
   function money(n) { return +n ? (+n).toLocaleString('zh-CN') + ' 万元' : '金额未填'; }
   function chip(v, t, key) { key = key || 'filter'; return '<button class="chip' + (state[key] === v ? ' on' : '') + '" data-' + key + '="' + v + '">' + t + '</button>'; }
   var LV = { ok: 's-ok', mid: 's-mid', bad: 's-bad', none: 's-none' };
-  function daysBox(d, lv) { return '<div class="days ' + LV[lv] + '"><b>' + Math.abs(d) + '</b>' + (d < 0 ? '天前到期' : '天后到期') + '</div>'; }
+  function daysBox(d, lv, word) { word = word || '到期'; if (d >= 9999) return ''; return '<div class="days ' + LV[lv] + '"><b>' + Math.abs(d) + '</b>' + (d < 0 ? '天前' + word : '天后' + word) + '</div>'; }
 
   function clientMeta(c) {
     var cr = credit(c), ls = loansOf(c.id), parts = [];
@@ -355,9 +363,10 @@
     var h = '';
     var due = dueItems(false), dueLoans = due.filter(function (x) { return x.kind === 'loan'; }).length,
         dueCredits = due.filter(function (x) { return x.kind === 'credit' && x.lv !== 'ok'; }).length,
+        dueTasks = due.filter(function (x) { return x.kind === 'task' && x.days <= 30; }).length,
         dueBad = due.filter(function (x) { return x.lv === 'bad'; }).length;
-    if (dueLoans || dueCredits) h += '<div class="card remind" data-tab="due" role="button" tabindex="0"><div><b class="' + (dueBad ? 'red' : '') + '">到期提醒</b>' +
-      '<div class="hint">' + settings.loanWarn + ' 天内到期借据 ' + dueLoans + ' 笔 · 需续授信 ' + dueCredits + ' 家' + (dueBad ? ' · <span class="red">' + dueBad + ' 项紧急</span>' : '') + '</div></div><span class="hint">查看 ›</span></div>';
+    if (dueLoans || dueCredits || dueTasks) h += '<div class="card remind" data-tab="due" role="button" tabindex="0"><div><b class="' + (dueBad ? 'red' : '') + '">到期提醒</b>' +
+      '<div class="hint">' + settings.loanWarn + ' 天内到期借据 ' + dueLoans + ' 笔 · 需续授信 ' + dueCredits + ' 家' + (dueTasks ? ' · 待办 ' + dueTasks + ' 项' : '') + (dueBad ? ' · <span class="red">' + dueBad + ' 项紧急</span>' : '') + '</div></div><span class="hint">查看 ›</span></div>';
 
     h += '<div class="card summary"><div class="row">' +
       '<div class="stat"><div class="num">' + visited + '<small>/' + n + '</small></div><div class="lbl">贷后访问已完成</div><div class="bar"><i style="width:' + pct(visited) + '%"></i></div></div>' +
@@ -397,9 +406,10 @@
     h += '<div class="card">';
     if (!items.length) h += '<div class="empty">' + (state.dueFilter === 'all' ? '还没有录入借据' : '近期没有到期事项 ✓') + '</div>';
     items.forEach(function (x) {
-      h += '<div class="due" data-' + (x.kind === 'loan' ? 'loan="' + esc(x.l.id) + '"' : 'client="' + esc(x.c.id) + '"') + ' role="button" tabindex="0">' +
+      var attr = x.kind === 'loan' ? 'loan="' + esc(x.l.id) + '"' : x.kind === 'task' ? 'task="' + esc(x.t.id) + '"' : 'client="' + esc(x.c.id) + '"';
+      h += '<div class="due" data-' + attr + ' role="button" tabindex="0">' +
         '<div><div class="name">' + esc(x.c.name) + '</div><div class="hint">' + esc(x.title) + '</div>' +
-        '<div class="advice ' + LV[x.lv] + '">' + esc(x.text) + '</div></div>' + daysBox(x.days, x.lv) + '</div>';
+        '<div class="advice ' + LV[x.lv] + '">' + esc(x.text) + '</div></div>' + daysBox(x.days, x.lv, x.kind === 'task' ? '截止' : '到期') + '</div>';
     });
     h += '</div><p class="hint">提醒规则：借据到期前 ' + settings.loanWarn + ' 天、授信到期前 ' + settings.creditWarn + ' 天开始提醒；授信到期前 ' + settings.approvalDays +
       ' 天仍未上报续授信标红。转贷判断依据授信到期日、借据原期限和最近一季“贷款情况”，仅供参考，以行内制度为准。规则可在“设置/导出”页修改。</p>';
@@ -427,7 +437,7 @@
       '<div class="field"><label for="sExceed">单笔可超授信到期（月）</label><input id="sExceed" type="number" inputmode="numeric" value="' + esc(settings.exceedMonths) + '"></div></div>' +
       '<p class="hint">“单笔可超授信到期”填 0 表示新借据到期日不能晚于授信到期日。</p>' +
       '<button class="btn" data-act="saveS">保存规则</button></div>' +
-      '<div class="card"><h3>导出 Excel</h3><p class="hint">包含客户授信、借据明细、' + qLabel(state.q) + '进度、全部季度记录四张表，可用 Excel / WPS 打开。</p>' +
+      '<div class="card"><h3>导出 Excel</h3><p class="hint">包含客户授信、借据明细、待办、' + qLabel(state.q) + '进度、全部季度记录五张表，可用 Excel / WPS 打开。</p>' +
       '<button class="btn ghost" data-act="xlsx">导出 Excel（.xlsx）</button></div>' +
       '<div class="card"><h3>数据保存在哪里</h3><p class="hint">数据保存在你的 Claude 账号里，换手机登录同一账号也能看到。这个页面默认只有你自己能打开。</p></div>';
   }
@@ -446,7 +456,7 @@
 
     if (fromSnap && state.viewing && !$('sheet').hidden) viewClient(state.viewing); // 打开着的客户详情随数据刷新
     if (failed) { $('view').innerHTML = '<div class="empty">' + failed + '</div>'; return; }
-    if (!loaded.c || !loaded.r || !loaded.l || !loaded.s) { $('view').innerHTML = '<div class="empty">正在加载数据…</div>'; return; }
+    if (!loaded.c || !loaded.r || !loaded.l || !loaded.s || !loaded.t) { $('view').innerHTML = '<div class="empty">正在加载数据…</div>'; return; }
     if (fromSnap && state.tab === 'more' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#view')) return; // 正在填写设置时不打断
     $('view').innerHTML = { board: renderBoard, due: renderDue, clients: renderClients, more: renderMore }[state.tab]();
   }
@@ -519,6 +529,15 @@
         '<div class="hint">' + esc(l.start || '未填') + ' ～ ' + esc(l.end || '未填') + (l.method ? ' · ' + esc(l.method) : '') + ' · 计划：' + PLANS[l.plan || ''] + '</div>' +
         (l.closed ? '' : '<div class="advice ' + LV[a.lv] + '">' + esc(a.text) + '</div>') + '</div>';
     });
+    var ts = tasksOf(id);
+    h += '<div class="sub-title">待办（' + ts.filter(function (t) { return !t.done; }).length + ' 项）<button class="chip" data-act="addT" data-id="' + esc(id) + '">+ 添加待办</button></div>';
+    ts.forEach(function (t) {
+      var d = t.due ? daysBetween(today(), parse(t.due)) : null;
+      h += '<div class="loan-row' + (t.done ? ' closed' : '') + '" data-task="' + esc(t.id) + '" role="button" tabindex="0">' +
+        '<div style="display:flex;justify-content:space-between;gap:8px"><b>' + (t.done ? '✓ ' : '') + esc(t.title) + '</b><span class="hint" style="flex:none">' +
+        (t.done ? '已完成' : d == null ? '' : d < 0 ? '已过期 ' + (-d) + ' 天' : d + ' 天后截止') + '</span></div>' +
+        '<div class="hint">' + (t.due ? '截止 ' + esc(t.due) : '未设截止日') + (t.note ? ' · ' + esc(t.note) : '') + '</div></div>';
+    });
     h += '<div class="actions"><button class="btn ghost" data-act="close">关闭</button><button class="btn" data-edit="' + esc(id) + '">本季进度</button></div>';
     var top = state.viewing === id ? $('sheet').scrollTop : 0;
     openSheet(h, null, id);
@@ -554,6 +573,7 @@
     var paths = ['clients/' + id];
     Object.keys(records).forEach(function (k) { if (records[k].clientId === id || k.slice(7) === id) paths.push('records/' + k); });
     loans.forEach(function (l) { if (l.clientId === id) paths.push('loans/' + l.id); });
+    tasks.forEach(function (t) { if (t.clientId === id) paths.push('tasks/' + t.id); });
     var p = Promise.resolve();
     paths.forEach(function (path) { p = p.then(function () { return store.doc(path).delete(); }); });
     sheetStack = [];
@@ -591,6 +611,30 @@
     var l = findLoan(id); if (!l) return;
     if (state.delArm !== id) { state.delArm = id; btn.textContent = '再点一次确认删除'; return; }
     write(btn, store.doc('loans/' + id).delete(), '已删除', function () { viewClient(l.clientId); });
+  }
+
+  function editTask(id, cid) {
+    var t = findTask(id) || { id: '', clientId: cid, title: '', due: '', note: '', done: false };
+    var c = findClient(t.clientId); if (!c) return;
+    openSheet('<h2>' + (id ? '编辑待办' : '添加待办') + '</h2><div class="hint">' + esc(c.name) + '</div>' +
+      field('tTitle', '要做的事', t.title, 'placeholder="如：重新上报授信"') +
+      field('tDue', '截止日', t.due, 'type="date"') +
+      '<div class="field"><label for="tNote">备注</label><textarea id="tNote">' + esc(t.note) + '</textarea></div>' +
+      '<label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="tDone"' + (t.done ? ' checked' : '') + '> 已完成</label>' +
+      '<div class="actions"><button class="btn ghost" data-act="close">取消</button><button class="btn" data-act="saveT" data-id="' + esc(t.id) + '" data-cid="' + esc(t.clientId) + '">保存</button></div>' +
+      (id ? '<button class="btn danger" data-act="delT" data-id="' + esc(t.id) + '">删除该待办</button>' : ''), function () { viewClient(t.clientId); });
+  }
+  function saveTask(id, cid, btn) {
+    var title = $('tTitle').value.trim();
+    if (!title) { toast('请填写要做的事'); return; }
+    var ref = id ? store.doc('tasks/' + id) : store.collection('tasks').doc();
+    write(btn, ref.set({ clientId: cid, title: title, due: $('tDue').value, note: $('tNote').value.trim(), done: $('tDone').checked }),
+      '已保存', function () { viewClient(cid); });
+  }
+  function delTask(id, btn) {
+    var t = findTask(id); if (!t) return;
+    if (state.delArm !== id) { state.delArm = id; btn.textContent = '再点一次确认删除'; return; }
+    write(btn, store.doc('tasks/' + id).delete(), '已删除', function () { viewClient(t.clientId); });
   }
 
   function saveSettings(btn) {
@@ -714,6 +758,9 @@
     var blob = buildXlsx([
       { name: '客户授信', rows: s1, widths: [30, 14, 12, 12, 12, 12, 14, 36] },
       { name: '借据明细', rows: s2, widths: [30, 14, 12, 12, 18, 10, 14, 50, 30, 8] },
+      { name: '待办', rows: [['企业名称', '要做的事', '截止日', '备注', '状态']].concat(tasks.slice().sort(function (a, b) { return String(a.due || '9').localeCompare(String(b.due || '9')); }).map(function (t) {
+        var c = findClient(t.clientId); return [c ? c.name : '', t.title, t.due || '', t.note || '', t.done ? '已完成' : '未完成'];
+      })), widths: [30, 30, 12, 36, 8] },
       { name: k + '进度', rows: s3, widths: PW },
       { name: '全部季度记录', rows: s4, widths: [16].concat(PW) }
     ]);
@@ -729,7 +776,7 @@
 
   // ---------- 事件 ----------
   document.addEventListener('click', function (e) {
-    var t = e.target.closest('button, [data-edit], [data-client], [data-loan], [data-tab], #mask');
+    var t = e.target.closest('button, [data-edit], [data-client], [data-loan], [data-task], [data-tab], #mask');
     if (!t) return;
     var ds = t.dataset;
     if (t.id === 'mask') return closeAll();
@@ -740,6 +787,7 @@
     if (ds.edit) { sheetStack = []; return editProgress(ds.edit); }
     if (ds.client) return viewClient(ds.client);
     if (ds.loan) return editLoan(ds.loan);
+    if (ds.task) return editTask(ds.task);
     if (ds.v != null && t.parentNode.dataset.seg) {
       t.parentNode.querySelectorAll('button').forEach(function (b) { b.classList.remove('on'); });
       t.classList.add('on');
@@ -761,6 +809,9 @@
       case 'addL': editLoan('', ds.id); break;
       case 'saveL': saveLoan(ds.id, ds.cid, t); break;
       case 'delL': delLoan(ds.id, t); break;
+      case 'addT': editTask('', ds.id); break;
+      case 'saveT': saveTask(ds.id, ds.cid, t); break;
+      case 'delT': delTask(ds.id, t); break;
       case 'saveS': saveSettings(t); break;
       case 'xlsx': exportXlsx(t); break;
     }
@@ -788,6 +839,10 @@
     db.collection('records').onSnapshot(function (snap) {
       var m = {}; snap.docs.forEach(function (d) { m[d.id] = d.data(); });
       records = m; loaded.r = true; render(true);
+    }, fail);
+    db.collection('tasks').onSnapshot(function (snap) {
+      tasks = snap.docs.map(function (d) { var x = Object.assign({}, d.data()); x.id = d.id; x.done = !!x.done; x.title = String(x.title || ''); return x; });
+      loaded.t = true; render(true);
     }, fail);
     db.collection('settings').onSnapshot(function (snap) {
       var m = snap.docs.filter(function (d) { return d.id === 'main'; })[0];
