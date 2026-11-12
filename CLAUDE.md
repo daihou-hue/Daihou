@@ -36,3 +36,10 @@
 6. 押品重估价值为 0 或空时提醒用户补。
 7. 财务大幅变动（营收、经营现金流转负、其他应收/其他应付翻倍）时，（三）不要只写“无”，至少给出原因说明供用户取舍。
 8. 风险信号、基本信息查询勾选“否”，但结论里写了涉诉/股权变更时，提醒用户核对勾选是否符合行内口径。
+
+## 贷后管理看板（手机端）
+- 在用：Claude 私密看板 https://claude.ai/artifact/8rLmUtPR7Ad26j1h6tv8tS （2026-11 重新发布；旧链接 BRownHGVgzLjb75GixrL8W 已打不开，云端数据随之丢失）
+- 源码：`artifact/dashboard.html`。改完用 Artifact 工具发布到上面这个 URL，不要新建。能力：`db` + `downloads`。
+- db 结构：`clients/{id}`（name, order, credit{limit 万元, start, end, guarantee, renew}）、`loans/{id}`（clientId, amount, start, end, method, plan, note, closed）、`records/{2026Q4_客户id}`（visit/loan/report 状态）、`tasks/{id}`、`settings/main`。用 ArtifactData 读写。
+- 根目录 `index.html` 是早期 GitHub Pages 版（数据存浏览器本地），已停用。
+- 客户名称等数据只放看板 db，绝不写进代码或提交。
